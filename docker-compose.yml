@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: firewatch
+      POSTGRES_USER: firewatch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set_POSTGRES_PASSWORD_in_.env}
+    volumes:
+      - firewatch_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firewatch -d firewatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://firewatch:${POSTGRES_PASSWORD:?Set_POSTGRES_PASSWORD_in_.env}@db:5432/firewatch
+      FIREWATCH_API_KEY: ${FIREWATCH_API_KEY:-}
+      FIREWATCH_SECRET_KEY: ${FIREWATCH_SECRET_KEY:-}
+      FIREWATCH_SECRET_KEY_FILE: /data/secret.key
+      ENABLE_INLINE_WORKER: ${ENABLE_INLINE_WORKER:-true}
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      REQUIRE_SCOPE_ACK: "true"
+      MAX_PAGES: "300"
+      MAX_DEPTH: "8"
+      MAX_ENDPOINTS: "2000"
+      REQUEST_TIMEOUT_SECONDS: "15"
+      REQUEST_DELAY_MS: "150"
+      MAX_CONCURRENCY: "4"
+      MAX_PARAMETER_PROBES: "60"
+      ENABLE_SAFE_PARAMETER_PROBES: "true"
+      RESPECT_ROBOTS: "true"
+      ENABLE_BROWSER: "true"
+      ENABLE_API_INTROSPECTION: "true"
+      REPORT_DIR: /data/reports
+      CORS_ORIGINS: http://localhost:8000,http://127.0.0.1:8000
+    volumes:
+      - firewatch_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    profiles: ["external-worker"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql+psycopg://firewatch:${POSTGRES_PASSWORD:?Set_POSTGRES_PASSWORD_in_.env}@db:5432/firewatch
+      FIREWATCH_API_KEY: ${FIREWATCH_API_KEY:-}
+      FIREWATCH_SECRET_KEY: ${FIREWATCH_SECRET_KEY:-}
+      FIREWATCH_SECRET_KEY_FILE: /data/secret.key
+      ENABLE_INLINE_WORKER: ${ENABLE_INLINE_WORKER:-true}
+      ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-false}
+      REPORT_DIR: /data/reports
+    volumes:
+      - firewatch_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "app.worker"]
+  demo:
+    build: {context: ./demo_target}
+    profiles: ["demo"]
+    ports:
+      - "127.0.0.1:8765:9000"
+volumes:
+  firewatch_pg:
+  firewatch_data:
